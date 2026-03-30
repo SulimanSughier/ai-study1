@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Register</h2>
+<input id="reg_user" placeholder="Username"><br><br>
+<input id="reg_pass" type="password" placeholder="Password"><br><br>
+<button onclick="register()">Register</button>
+
+<h2>Login</h2>
+<input id="log_user" placeholder="Username"><br><br>
+<input id="log_pass" type="password" placeholder="Password"><br><br>
+<button onclick="login()">Login</button>
+
+<h2>AI Tutor</h2>
+<textarea id="msg"></textarea><br><br>
+<button onclick="send()">Send</button>
+
+<p id="reply"></p>
+
+<script>
+let loggedIn = false;
+let currentUser = "";
+
+async function register() {
+    let res = await fetch("http://localhost:5000/register", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            username: document.getElementById("reg_user").value,
+            password: document.getElementById("reg_pass").value
+        })
+    });
+
+    let data = await res.json();
+    alert(data.status);
+}
+
+async function login() {
+    let username = document.getElementById("log_user").value;
+
+    let res = await fetch("http://localhost:5000/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            username: username,
+            password: document.getElementById("log_pass").value
+        })
+    });
+
+    let data = await res.json();
+    if (data.status === "success") {
+        loggedIn = true;
+        currentUser = username;
+        alert("Logged in!");
+    } else {
+        alert("Wrong login");
+    }
+}
+
+async function send() {
+    if (!loggedIn) {
+        alert("Please login first");
+        return;
+    }
+
+    let res = await fetch("http://localhost:5000/chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            message: document.getElementById("msg").value,
+            username: currentUser
+        })
+    });
+
+    let data = await res.json();
+    document.getElementById("reply").innerText = data.reply;
+}
+</script>
+
+</body>
+</html>
