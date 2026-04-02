@@ -3,18 +3,34 @@ from flask_cors import CORS
 import os
 import csv
 import hashlib
+import logging
 from datetime import datetime
 from openai import OpenAI
+
+# ================================
+# LOGGING (see real errors in console)
+# ================================
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
-# ✅ API KEY
+# ================================
+# API KEY
+# ================================
 API_KEY = os.getenv("OPENAI_API_KEY")
 if not API_KEY:
     raise ValueError("OPENAI_API_KEY is not set")
 
 client = OpenAI(api_key=API_KEY)
+
+# ================================
+# FILE PATHS  ← FIX #1: use absolute paths
+# ================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(BASE_DIR, "users.csv")
+DATA_FILE  = os.path.join(BASE_DIR, "data.csv")
 
 # ================================
 # SYSTEM PROMPT
@@ -36,33 +52,58 @@ Keep it simple.
 # ================================
 # HELPERS
 # ================================
-def hash_password(password):
+def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-def ensure_file_exists(filename):
-    if not os.path.exists(filename):
-        with open(filename, "w"):
+
+def ensure_file_exists(filepath: str) -> None:
+    """Create the file (and any parent dirs) if it doesn't exist."""
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    if not os.path.exists(filepath):
+        with open(filepath, "w", newline="", encoding="utf-8"):
             pass
 
-# ================================
-# USER SYSTEM
-# ================================
-def user_exists(username):
-    ensure_file_exists("users.csv")
-    with open("users.csv", "r", encoding="utf-8") as f:
-        return any(row and row[0] == username for row in csv.reader(f))
 
-def add_user(username, password):
-    with open("users.csv", "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([username, hash_password(password)])
+# ================================
+# USER SYSTEM  ← FIX #2 & #3
+# ================================
+def user_exists(username: str) -> bool:
+    ensure_file_exists(USERS_FILE)
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                # FIX: guard against empty rows AND short rows
+                if row and len(row) >= 2 and row[0].strip() == username:
+                    return True
+    except Exception as e:
+        logger.error("user_exists ERROR: %s", e)
+        raise   # re-raise so the route's except block catches it properly
+    return False
 
-def check_user(username, password):
-    ensure_file_exists("users.csv")
-    with open("users.csv", "r", encoding="utf-8") as f:
-        return any(
-            row and row[0] == username and row[1] == hash_password(password)
-            for row in csv.reader(f)
-        )
+
+def add_user(username: str, password: str) -> None:
+    ensure_file_exists(USERS_FILE)
+    try:
+        with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([username, hash_password(password)])
+    except Exception as e:
+        logger.error("add_user ERROR: %s", e)
+        raise
+
+
+def check_user(username: str, password: str) -> bool:
+    ensure_file_exists(USERS_FILE)
+    hashed = hash_password(password)
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and len(row) >= 2 and row[0].strip() == username and row[1] == hashed:
+                    return True
+    except Exception as e:
+        logger.error("check_user ERROR: %s", e)
+        raise
+    return False
+
 
 # ================================
 # ROUTES
@@ -72,63 +113,75 @@ def check_user(username, password):
 def home():
     return send_from_directory("static", "index.html")
 
+
 # -------- REGISTER --------
 @app.route("/register", methods=["POST"])
 def register():
     try:
-        data = request.get_json()
+        # FIX #4: force=True handles missing/wrong Content-Type headers
+        data = request.get_json(force=True, silent=True)
 
         if not data:
-            return jsonify({"error": "Invalid request"}), 400
+            return jsonify({"error": "Invalid or empty JSON body"}), 400
 
         username = data.get("username", "").strip()
         password = data.get("password", "").strip()
 
         if not username or not password:
-            return jsonify({"error": "Missing fields"}), 400
+            return jsonify({"error": "Missing username or password"}), 400
+
+        if len(username) < 3:
+            return jsonify({"error": "Username must be at least 3 characters"}), 400
+
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
 
         if user_exists(username):
-            return jsonify({"error": "User already exists"}), 400
+            return jsonify({"error": "User already exists"}), 409  # 409 Conflict is more accurate
 
         add_user(username, password)
-        return jsonify({"status": "success"}), 200
+        logger.info("New user registered: %s", username)
+        return jsonify({"status": "success", "message": "Registration successful"}), 201
 
     except Exception as e:
-        print("REGISTER ERROR:", e)
-        return jsonify({"error": "Server error"}), 500
+        logger.error("REGISTER ERROR: %s", e, exc_info=True)  # logs full traceback
+        return jsonify({"error": "Server error", "detail": str(e)}), 500
+
 
 # -------- LOGIN --------
 @app.route("/login", methods=["POST"])
 def login():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True, silent=True)
 
         if not data:
-            return jsonify({"error": "Invalid request"}), 400
+            return jsonify({"error": "Invalid or empty JSON body"}), 400
 
         username = data.get("username", "").strip()
         password = data.get("password", "").strip()
 
         if not username or not password:
-            return jsonify({"error": "Missing fields"}), 400
+            return jsonify({"error": "Missing username or password"}), 400
 
         if check_user(username, password):
+            logger.info("User logged in: %s", username)
             return jsonify({"status": "success"}), 200
 
         return jsonify({"error": "Invalid credentials"}), 401
 
     except Exception as e:
-        print("LOGIN ERROR:", e)
-        return jsonify({"error": "Server error"}), 500
+        logger.error("LOGIN ERROR: %s", e, exc_info=True)
+        return jsonify({"error": "Server error", "detail": str(e)}), 500
+
 
 # -------- CHAT --------
 @app.route("/chat", methods=["POST"])
 def chat():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True, silent=True)
 
         if not data:
-            return jsonify({"error": "Invalid request"}), 400
+            return jsonify({"error": "Invalid or empty JSON body"}), 400
 
         student_input = data.get("message", "").strip()
         username = data.get("username", "anonymous")
@@ -140,35 +193,29 @@ def chat():
             model="gpt-4o-mini",
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": student_input}
+                {"role": "user",   "content": student_input}
             ]
         )
 
-        # ✅ SAFE RESPONSE
         reply = ""
         try:
             reply = response.output_text
-        except:
+        except AttributeError:
             try:
                 reply = response.output[0].content[0].text
-            except:
+            except Exception:
                 reply = "⚠️ No response from AI"
 
-        # 💾 SAVE
-        ensure_file_exists("data.csv")
-        with open("data.csv", "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([
-                datetime.now(),
-                username,
-                student_input,
-                reply
-            ])
+        ensure_file_exists(DATA_FILE)
+        with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([datetime.now(), username, student_input, reply])
 
         return jsonify({"reply": reply}), 200
 
     except Exception as e:
-        print("CHAT ERROR:", e)
-        return jsonify({"error": "Server error"}), 500
+        logger.error("CHAT ERROR: %s", e, exc_info=True)
+        return jsonify({"error": "Server error", "detail": str(e)}), 500
+
 
 # ================================
 # RUN
