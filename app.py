@@ -1,132 +1,89 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
-import csv
-import hashlib
-from datetime import datetime
 from openai import OpenAI
+import csv
+import os
+from datetime import datetime
 
-app = Flask(__name__, static_folder="static")
+app = Flask(__name__)
 CORS(app)
 
-# API Key Check
-API_KEY = os.getenv("OPENAI_API_KEY")
-if not API_KEY:
-    raise ValueError("OPENAI_API_KEY is not set")
+client = OpenAI()
 
-client = OpenAI(api_key=API_KEY)
+SYSTEM_PROMPT = """You are an expert obstetrics tutor teaching medical students about preeclampsia using NICE and RCOG guidelines.
 
-# System Prompt
-SYSTEM_PROMPT = """
-You are a medical tutor teaching preeclampsia.
-
-Always answer in this format:
-1. Definition
-2. Causes
-3. Symptoms
-4. Diagnosis
-5. Management
-
-End with one short question.
-Keep it simple.
+Provide a clear, detailed explanation, then ask one question.
 """
 
-# Helpers
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def ensure_file_exists(filename):
-    if not os.path.exists(filename):
-        with open(filename, "w") as f:
-            pass
-
-# User System
+# -------- USER FUNCTIONS --------
 def user_exists(username):
-    ensure_file_exists("users.csv")
+    if not os.path.exists("users.csv"):
+        return False
     with open("users.csv", "r", encoding="utf-8") as f:
-        return any(row and row[0] == username for row in csv.reader(f))
+        for row in csv.reader(f):
+            if row[0] == username:
+                return True
+    return False
 
 def add_user(username, password):
     with open("users.csv", "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([username, hash_password(password)])
+        writer = csv.writer(f)
+        writer.writerow([username, password])
 
 def check_user(username, password):
-    ensure_file_exists("users.csv")
+    if not os.path.exists("users.csv"):
+        return False
     with open("users.csv", "r", encoding="utf-8") as f:
-        return any(
-            row and row[0] == username and row[1] == hash_password(password)
-            for row in csv.reader(f)
-        )
+        for row in csv.reader(f):
+            if row[0] == username and row[1] == password:
+                return True
+    return False
 
-# Routes
-@app.route("/")
-def home():
-    return send_from_directory("static", "index.html")
-
+# -------- REGISTER --------
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.get_json()
-    username = data.get("username")
-    password = data.get("password")
-    
-    if not username or not password:
-        return jsonify({"error": "Missing fields"}), 400
+    data = request.json
+    username = data["username"]
+    password = data["password"]
 
     if user_exists(username):
-        return jsonify({"error": "User already exists"}), 400
+        return jsonify({"status": "exists"})
 
     add_user(username, password)
-    return jsonify({"status": "User created successfully"}), 201
+    return jsonify({"status": "created"})
 
+# -------- LOGIN --------
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json()
-    
-    if not data.get("username") or not data.get("password"):
-        return jsonify({"error": "Missing fields"}), 400
-
+    data = request.json
     if check_user(data["username"], data["password"]):
-        return jsonify({"status": "Login successful"}), 200
+        return jsonify({"status": "success"})
+    return jsonify({"status": "fail"})
 
-    return jsonify({"error": "Invalid username or password"}), 401
-
+# -------- CHAT + SAVE DATA --------
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json()
-    student_input = data.get("message", "")
-    username = data.get("username", "anonymous")
+    data = request.json
+    student_input = data["message"]
+    username = data["username"]
 
-    if not student_input:
-        return jsonify({"error": "Empty message"}), 400
+    response = client.chat.completions.create(
+        model="gpt-4.1",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": student_input}
+        ]
+    )
 
-    # Safe API Call
-    try:
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": student_input}
-            ]
-        )
+    reply = response.choices[0].message.content
 
-        reply = response.output_text or "⚠️ AI returned no response"
-
-    except Exception as e:
-        print("Chat API error:", e)
-        return jsonify({"error": "Could not get a response from AI"}), 500
-
-    # Save Chat
-    ensure_file_exists("data.csv")
+    # SAVE DATA (UTF-8 FIXED)
     with open("data.csv", "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([
-            datetime.now(),
-            username,
-            student_input,
-            reply
-        ])
+        writer = csv.writer(f)
+        writer.writerow([datetime.now(), username, student_input, reply])
 
-    return jsonify({"reply": reply}), 200
+    return jsonify({
+        "reply": reply
+    })
 
-# Run
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+app.run(debug=True)
