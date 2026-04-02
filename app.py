@@ -9,14 +9,41 @@ import hashlib
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
+# ✅ API KEY from environment
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-SYSTEM_PROMPT = """You are an expert obstetrics tutor teaching medical students about preeclampsia using NICE and RCOG guidelines.
+# ================================
+# 🔥 IMPROVED SYSTEM PROMPT
+# ================================
+SYSTEM_PROMPT = """
+You are a highly experienced obstetrics professor teaching medical students about preeclampsia using NICE and RCOG guidelines.
 
-Provide a clear, detailed explanation, then ask one question.
+Your responsibilities:
+1. Always interpret and correct spelling mistakes automatically.
+2. Even if the user writes poorly, understand the intent.
+3. Keep the topic strictly about preeclampsia.
+
+Always respond in this clear structured format:
+
+1. Definition
+2. Causes / Pathophysiology
+3. Signs and Symptoms
+4. Diagnosis
+5. Management
+
+Then:
+- End with ONE short question to test the student.
+
+Rules:
+- Be simple, clear, and educational
+- Do NOT mention that you corrected spelling
+- Do NOT go off-topic
+- If input is unclear, assume it relates to preeclampsia and explain basics
 """
 
-# ---------- HELPERS ----------
+# ================================
+# 🔐 HELPERS
+# ================================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -24,7 +51,9 @@ def ensure_file_exists(filename):
     if not os.path.exists(filename):
         open(filename, "w").close()
 
-# ---------- USER ----------
+# ================================
+# 👤 USER FUNCTIONS
+# ================================
 def user_exists(username):
     ensure_file_exists("users.csv")
     with open("users.csv", "r", encoding="utf-8") as f:
@@ -37,14 +66,21 @@ def add_user(username, password):
 def check_user(username, password):
     ensure_file_exists("users.csv")
     with open("users.csv", "r", encoding="utf-8") as f:
-        return any(row and row[0] == username and row[1] == hash_password(password)
-                   for row in csv.reader(f))
+        return any(
+            row and row[0] == username and row[1] == hash_password(password)
+            for row in csv.reader(f)
+        )
 
-# ---------- ROUTES ----------
+# ================================
+# 🌐 ROUTES
+# ================================
+
+# Serve UI
 @app.route("/")
-def serve_ui():
+def home():
     return send_from_directory("static", "index.html")
 
+# -------- REGISTER --------
 @app.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -64,6 +100,7 @@ def register():
     add_user(username, password)
     return jsonify({"status": "created"})
 
+# -------- LOGIN --------
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -76,6 +113,7 @@ def login():
 
     return jsonify({"status": "fail"})
 
+# -------- CHAT --------
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json()
@@ -83,31 +121,49 @@ def chat():
     if not data:
         return jsonify({"error": "Invalid request"}), 400
 
-    student_input = data.get("message")
+    student_input = data.get("message", "")
     username = data.get("username", "anonymous")
+
+    # 🔥 Clean input (handles messy typing)
+    cleaned_input = student_input.strip().lower()
 
     try:
         response = client.chat.completions.create(
             model="gpt-4.1",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": student_input}
-            ]
+
+                # 🔥 Helps AI interpret bad spelling
+                {"role": "user", "content": f"""
+The student wrote the following (may contain spelling mistakes):
+\"{cleaned_input}\"
+
+Interpret the meaning and respond accordingly about preeclampsia.
+"""}
+            ],
+            temperature=0.5
         )
 
         reply = response.choices[0].message.content
 
-        # Save conversation
+        # 💾 Save conversation
         ensure_file_exists("data.csv")
         with open("data.csv", "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([datetime.now(), username, student_input, reply])
+            csv.writer(f).writerow([
+                datetime.now(),
+                username,
+                student_input,
+                reply
+            ])
 
         return jsonify({"reply": reply})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ---------- RUN ----------
+# ================================
+# 🚀 RUN SERVER
+# ================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
