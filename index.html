@@ -1,80 +1,129 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Medical Tutor</title>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f5f7fb;
+}
+
+.container {
+    max-width: 500px;
+    margin: auto;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    background: #4a6cf7;
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-size: 18px;
+}
+
+#chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.message {
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 10px;
+    max-width: 80%;
+}
+
+.user {
+    background: #4a6cf7;
+    color: white;
+    margin-left: auto;
+}
+
+.bot {
+    background: #e4e7ec;
+}
+
+.input-area {
+    display: flex;
+    padding: 10px;
+    background: white;
+}
+
+input {
+    flex: 1;
+    padding: 10px;
+    border-radius: 20px;
+    border: 1px solid #ccc;
+}
+
+button {
+    margin-left: 10px;
+    padding: 10px 15px;
+    border: none;
+    background: #4a6cf7;
+    color: white;
+    border-radius: 20px;
+}
+</style>
+</head>
+
 <body>
 
-<h2>Register</h2>
-<input id="reg_user" placeholder="Username"><br><br>
-<input id="reg_pass" type="password" placeholder="Password"><br><br>
-<button onclick="register()">Register</button>
+<div class="container">
+    <header>Medical AI Tutor</header>
 
-<h2>Login</h2>
-<input id="log_user" placeholder="Username"><br><br>
-<input id="log_pass" type="password" placeholder="Password"><br><br>
-<button onclick="login()">Login</button>
+    <div id="chat"></div>
 
-<h2>AI Tutor</h2>
-<textarea id="msg"></textarea><br><br>
-<button onclick="send()">Send</button>
-
-<p id="reply"></p>
+    <div class="input-area">
+        <input id="message" placeholder="Ask about preeclampsia..." />
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
 
 <script>
-let loggedIn = false;
-let currentUser = "";
+let username = "student";
 
-async function register() {
-    let res = await fetch("http://localhost:5000/register", {
+async function sendMessage() {
+    const input = document.getElementById("message");
+    const text = input.value.trim();
+    if (!text) return;
+
+    addMessage(text, "user");
+    input.value = "";
+
+    const res = await fetch("/chat", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-            username: document.getElementById("reg_user").value,
-            password: document.getElementById("reg_pass").value
+            message: text,
+            username: username
         })
     });
 
-    let data = await res.json();
-    alert(data.status);
-}
+    const data = await res.json();
 
-async function login() {
-    let username = document.getElementById("log_user").value;
-
-    let res = await fetch("http://localhost:5000/login", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            username: username,
-            password: document.getElementById("log_pass").value
-        })
-    });
-
-    let data = await res.json();
-    if (data.status === "success") {
-        loggedIn = true;
-        currentUser = username;
-        alert("Logged in!");
+    if (data.reply) {
+        addMessage(data.reply, "bot");
     } else {
-        alert("Wrong login");
+        addMessage("Error: " + data.error, "bot");
     }
 }
 
-async function send() {
-    if (!loggedIn) {
-        alert("Please login first");
-        return;
-    }
-
-    let res = await fetch("http://localhost:5000/chat", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            message: document.getElementById("msg").value,
-            username: currentUser
-        })
-    });
-
-    let data = await res.json();
-    document.getElementById("reply").innerText = data.reply;
+function addMessage(text, type) {
+    const chat = document.getElementById("chat");
+    const div = document.createElement("div");
+    div.className = "message " + type;
+    div.innerText = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
 }
 </script>
 
