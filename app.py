@@ -9,11 +9,14 @@ import hashlib
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
-# ✅ API KEY from environment
+# ✅ CHECK API KEY
+if not os.environ.get("OPENAI_API_KEY"):
+    raise ValueError("❌ OPENAI_API_KEY is not set")
+
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # ================================
-# 🔥 IMPROVED SYSTEM PROMPT
+# 🔥 SYSTEM PROMPT
 # ================================
 SYSTEM_PROMPT = """
 You are a highly experienced obstetrics professor teaching medical students about preeclampsia using NICE and RCOG guidelines.
@@ -75,7 +78,6 @@ def check_user(username, password):
 # 🌐 ROUTES
 # ================================
 
-# Serve UI
 @app.route("/")
 def home():
     return send_from_directory("static", "index.html")
@@ -124,16 +126,14 @@ def chat():
     student_input = data.get("message", "")
     username = data.get("username", "anonymous")
 
-    # 🔥 Clean input (handles messy typing)
     cleaned_input = student_input.strip().lower()
 
     try:
-        response = client.chat.completions.create(
+        # ✅ FIXED API CALL
+        response = client.responses.create(
             model="gpt-4.1",
-            messages=[
+            input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-
-                # 🔥 Helps AI interpret bad spelling
                 {"role": "user", "content": f"""
 The student wrote the following (may contain spelling mistakes):
 \"{cleaned_input}\"
@@ -144,9 +144,9 @@ Interpret the meaning and respond accordingly about preeclampsia.
             temperature=0.5
         )
 
-        reply = response.choices[0].message.content
+        reply = response.output_text
 
-        # 💾 Save conversation
+        # 💾 SAVE DATA
         ensure_file_exists("data.csv")
         with open("data.csv", "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
@@ -159,7 +159,8 @@ Interpret the meaning and respond accordingly about preeclampsia.
         return jsonify({"reply": reply})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("🔥 ERROR:", e)
+        return jsonify({"error": "Server crashed. Check backend logs."}), 500
 
 # ================================
 # 🚀 RUN SERVER
