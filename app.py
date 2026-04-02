@@ -9,43 +9,32 @@ import hashlib
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
-# ✅ CHECK API KEY
-if not os.environ.get("OPENAI_API_KEY"):
+# ✅ API KEY CHECK
+API_KEY = os.environ.get("OPENAI_API_KEY")
+if not API_KEY:
     raise ValueError("❌ OPENAI_API_KEY is not set")
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI(api_key=API_KEY)
 
 # ================================
-# 🔥 SYSTEM PROMPT
+# SYSTEM PROMPT
 # ================================
 SYSTEM_PROMPT = """
-You are a highly experienced obstetrics professor teaching medical students about preeclampsia using NICE and RCOG guidelines.
+You are a medical tutor teaching preeclampsia.
 
-Your responsibilities:
-1. Always interpret and correct spelling mistakes automatically.
-2. Even if the user writes poorly, understand the intent.
-3. Keep the topic strictly about preeclampsia.
-
-Always respond in this clear structured format:
-
+Always answer in this format:
 1. Definition
-2. Causes / Pathophysiology
-3. Signs and Symptoms
+2. Causes
+3. Symptoms
 4. Diagnosis
 5. Management
 
-Then:
-- End with ONE short question to test the student.
-
-Rules:
-- Be simple, clear, and educational
-- Do NOT mention that you corrected spelling
-- Do NOT go off-topic
-- If input is unclear, assume it relates to preeclampsia and explain basics
+End with one short question.
+Keep it simple.
 """
 
 # ================================
-# 🔐 HELPERS
+# HELPERS
 # ================================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -55,7 +44,7 @@ def ensure_file_exists(filename):
         open(filename, "w").close()
 
 # ================================
-# 👤 USER FUNCTIONS
+# USER SYSTEM
 # ================================
 def user_exists(username):
     ensure_file_exists("users.csv")
@@ -75,7 +64,7 @@ def check_user(username, password):
         )
 
 # ================================
-# 🌐 ROUTES
+# ROUTES
 # ================================
 
 @app.route("/")
@@ -85,68 +74,69 @@ def home():
 # -------- REGISTER --------
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.get_json()
+    try:
+        data = request.get_json()
+        username = data.get("username")
+        password = data.get("password")
 
-    if not data:
-        return jsonify({"error": "Invalid request"}), 400
+        if not username or not password:
+            return jsonify({"error": "Missing fields"}), 400
 
-    username = data.get("username")
-    password = data.get("password")
+        if user_exists(username):
+            return jsonify({"status": "exists"})
 
-    if not username or not password:
-        return jsonify({"error": "Missing fields"}), 400
+        add_user(username, password)
+        return jsonify({"status": "created"})
 
-    if user_exists(username):
-        return jsonify({"status": "exists"})
-
-    add_user(username, password)
-    return jsonify({"status": "created"})
+    except Exception as e:
+        print("REGISTER ERROR:", e)
+        return jsonify({"error": "Server error"}), 500
 
 # -------- LOGIN --------
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json()
+    try:
+        data = request.get_json()
 
-    if not data:
-        return jsonify({"error": "Invalid request"}), 400
+        if check_user(data.get("username"), data.get("password")):
+            return jsonify({"status": "success"})
 
-    if check_user(data.get("username"), data.get("password")):
-        return jsonify({"status": "success"})
+        return jsonify({"status": "fail"})
 
-    return jsonify({"status": "fail"})
+    except Exception as e:
+        print("LOGIN ERROR:", e)
+        return jsonify({"error": "Server error"}), 500
 
 # -------- CHAT --------
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"error": "Invalid request"}), 400
-
-    student_input = data.get("message", "")
-    username = data.get("username", "anonymous")
-
-    cleaned_input = student_input.strip().lower()
-
     try:
-        # ✅ FIXED API CALL
+        data = request.get_json()
+        student_input = data.get("message", "")
+        username = data.get("username", "anonymous")
+
+        print("User:", username, "| Message:", student_input)
+
+        # ✅ SAFE API CALL
         response = client.responses.create(
-            model="gpt-4.1",
+            model="gpt-4o-mini",  # ✅ stable & cheap
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"""
-The student wrote the following (may contain spelling mistakes):
-\"{cleaned_input}\"
-
-Interpret the meaning and respond accordingly about preeclampsia.
-"""}
-            ],
-            temperature=0.5
+                {"role": "user", "content": student_input}
+            ]
         )
 
-        reply = response.output_text
+        # ✅ SAFE RESPONSE EXTRACTION
+        reply = ""
+        try:
+            reply = response.output_text
+        except:
+            try:
+                reply = response.output[0].content[0].text
+            except:
+                reply = "⚠️ AI returned no response"
 
-        # 💾 SAVE DATA
+        # 💾 SAVE CHAT
         ensure_file_exists("data.csv")
         with open("data.csv", "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
@@ -159,12 +149,11 @@ Interpret the meaning and respond accordingly about preeclampsia.
         return jsonify({"reply": reply})
 
     except Exception as e:
-        print("🔥 ERROR:", e)
-        return jsonify({"error": "Server crashed. Check backend logs."}), 500
+        print("🔥 CHAT ERROR:", e)
+        return jsonify({"error": str(e)}), 500
 
 # ================================
-# 🚀 RUN SERVER
+# RUN
 # ================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
