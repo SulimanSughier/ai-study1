@@ -8,13 +8,22 @@ from datetime import datetime
 from openai import OpenAI
 
 # ================================
-# LOGGING (to see real errors in console)
+# LOGGING
 # ================================
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder="static")
-CORS(app)
+
+# ================================
+# CORS — Allow your GitHub Pages origin + localhost for dev
+# ================================
+CORS(app, origins=[
+    "https://sulimansughier.github.io",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "http://localhost:3000",
+])
 
 # ================================
 # API KEY
@@ -26,11 +35,11 @@ if not API_KEY:
 client = OpenAI(api_key=API_KEY)
 
 # ================================
-# FILE PATHS  ← use absolute paths
+# FILE PATHS
 # ================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.csv")
-DATA_FILE = os.path.join(BASE_DIR, "data.csv")
+DATA_FILE  = os.path.join(BASE_DIR, "data.csv")
 
 # ================================
 # SYSTEM PROMPT
@@ -53,21 +62,21 @@ Keep it simple.
 # HELPERS
 # ================================
 def hash_password(password: str) -> str:
-    """Hashes the password using SHA-256."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def ensure_file_exists(filepath: str) -> None:
-    """Creates the file (and any parent dirs) if it doesn't exist."""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    # ✅ FIX: guard against empty dirname (file is in current dir)
+    dir_name = os.path.dirname(filepath)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     if not os.path.exists(filepath):
         with open(filepath, "w", newline="", encoding="utf-8"):
             pass
 
 # ================================
-# USER SYSTEM  ← Enhanced error handling
+# USER SYSTEM
 # ================================
 def user_exists(username: str) -> bool:
-    """Checks if the user already exists in the CSV file."""
     ensure_file_exists(USERS_FILE)
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
@@ -76,11 +85,9 @@ def user_exists(username: str) -> bool:
                     return True
     except Exception as e:
         logger.error("user_exists ERROR: %s", e)
-        return False  # protect from crashing
     return False
 
 def add_user(username: str, password: str) -> None:
-    """Adds a new user to the CSV file."""
     ensure_file_exists(USERS_FILE)
     try:
         with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
@@ -90,7 +97,6 @@ def add_user(username: str, password: str) -> None:
         raise
 
 def check_user(username: str, password: str) -> bool:
-    """Checks if the username and password are valid."""
     ensure_file_exists(USERS_FILE)
     hashed = hash_password(password)
     try:
@@ -100,13 +106,11 @@ def check_user(username: str, password: str) -> bool:
                     return True
     except Exception as e:
         logger.error("check_user ERROR: %s", e)
-        return False
     return False
 
 # ================================
 # ROUTES
 # ================================
-
 @app.route("/")
 def home():
     return send_from_directory("static", "index.html")
@@ -116,24 +120,20 @@ def home():
 def register():
     try:
         data = request.get_json(force=True, silent=True)
-        
         if not isinstance(data, dict):
-            return jsonify({"error": "Invalid request format, expected JSON"}), 400
+            return jsonify({"error": "Invalid request format"}), 400
 
         username = data.get("username", "").strip()
         password = data.get("password", "").strip()
 
         if not username or not password:
             return jsonify({"error": "Missing username or password"}), 400
-
         if len(username) < 3:
             return jsonify({"error": "Username must be at least 3 characters"}), 400
-
         if len(password) < 6:
             return jsonify({"error": "Password must be at least 6 characters"}), 400
-
         if user_exists(username):
-            return jsonify({"error": "User already exists"}), 409  # 409 Conflict
+            return jsonify({"error": "User already exists"}), 409
 
         add_user(username, password)
         logger.info("New user registered: %s", username)
@@ -148,9 +148,8 @@ def register():
 def login():
     try:
         data = request.get_json(force=True, silent=True)
-
         if not isinstance(data, dict):
-            return jsonify({"error": "Invalid request format, expected JSON"}), 400
+            return jsonify({"error": "Invalid request format"}), 400
 
         username = data.get("username", "").strip()
         password = data.get("password", "").strip()
@@ -173,9 +172,8 @@ def login():
 def chat():
     try:
         data = request.get_json(force=True, silent=True)
-
         if not isinstance(data, dict):
-            return jsonify({"error": "Invalid request format, expected JSON"}), 400
+            return jsonify({"error": "Invalid request format"}), 400
 
         student_input = data.get("message", "").strip()
         username = data.get("username", "anonymous")
@@ -183,16 +181,17 @@ def chat():
         if not student_input:
             return jsonify({"error": "Empty message"}), 400
 
-        response = client.responses.create(
+        # ✅ FIX: Use correct OpenAI API method
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
-            input=[
+            messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": student_input}
+                {"role": "user",   "content": student_input}
             ]
         )
 
-        reply = response.output_text if hasattr(response, 'output_text') else "⚠️ No response from AI"
-        
+        reply = response.choices[0].message.content
+
         ensure_file_exists(DATA_FILE)
         with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([datetime.now(), username, student_input, reply])
