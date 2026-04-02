@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Medical Tutor</title>
+<title>Medical AI Tutor</title>
 
 <style>
 body {
@@ -20,6 +19,7 @@ body {
     flex-direction: column;
 }
 
+/* HEADER */
 header {
     background: #4a6cf7;
     color: white;
@@ -28,6 +28,36 @@ header {
     font-size: 18px;
 }
 
+/* CARD */
+.card {
+    background: white;
+    margin: 10px;
+    padding: 15px;
+    border-radius: 12px;
+}
+
+/* INPUTS */
+input, textarea {
+    width: 100%;
+    padding: 10px;
+    margin-top: 8px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+}
+
+/* BUTTON */
+button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 8px;
+    background: #4a6cf7;
+    color: white;
+    font-weight: bold;
+}
+
+/* CHAT */
 #chat {
     flex: 1;
     overflow-y: auto;
@@ -36,7 +66,7 @@ header {
 
 .message {
     padding: 10px;
-    margin: 5px 0;
+    margin: 6px 0;
     border-radius: 10px;
     max-width: 80%;
 }
@@ -51,26 +81,16 @@ header {
     background: #e4e7ec;
 }
 
-.input-area {
-    display: flex;
-    padding: 10px;
-    background: white;
+/* HIDE */
+.hidden {
+    display: none;
 }
 
-input {
-    flex: 1;
-    padding: 10px;
-    border-radius: 20px;
-    border: 1px solid #ccc;
-}
-
-button {
-    margin-left: 10px;
-    padding: 10px 15px;
-    border: none;
-    background: #4a6cf7;
-    color: white;
-    border-radius: 20px;
+/* STATUS TEXT */
+.status {
+    text-align: center;
+    font-size: 14px;
+    margin-top: 5px;
 }
 </style>
 </head>
@@ -78,53 +98,178 @@ button {
 <body>
 
 <div class="container">
-    <header>Medical AI Tutor</header>
 
+<header>Medical AI Tutor</header>
+
+<!-- AUTH -->
+<div id="auth">
+
+<div class="card">
+<h3>Register</h3>
+<input id="reg_user" placeholder="Username">
+<input id="reg_pass" type="password" placeholder="Password">
+<button onclick="register()">Register</button>
+<div id="reg_status" class="status"></div>
+</div>
+
+<div class="card">
+<h3>Login</h3>
+<input id="log_user" placeholder="Username">
+<input id="log_pass" type="password" placeholder="Password">
+<button onclick="login()">Login</button>
+<div id="log_status" class="status"></div>
+</div>
+
+</div>
+
+<!-- CHAT -->
+<div id="chatUI" class="hidden" style="display:flex; flex-direction:column; height:100%;">
+    
     <div id="chat"></div>
 
-    <div class="input-area">
-        <input id="message" placeholder="Ask about preeclampsia..." />
-        <button onclick="sendMessage()">Send</button>
+    <div class="card">
+        <textarea id="msg" placeholder="Ask about preeclampsia..."></textarea>
+        <button onclick="send()">Send</button>
     </div>
+
+</div>
+
 </div>
 
 <script>
-let username = "student";
+let currentUser = null;
 
-async function sendMessage() {
-    const input = document.getElementById("message");
-    const text = input.value.trim();
-    if (!text) return;
+// ✅ Automatically detect correct backend URL
+const BASE_URL = window.location.origin;
 
-    addMessage(text, "user");
-    input.value = "";
+/* -------- REGISTER -------- */
+async function register() {
+    reg_status.innerText = "Creating account...";
 
-    const res = await fetch("/chat", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            message: text,
-            username: username
-        })
-    });
+    try {
+        const res = await fetch(BASE_URL + "/register", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                username: reg_user.value.trim(),
+                password: reg_pass.value.trim()
+            })
+        });
 
-    const data = await res.json();
+        const data = await res.json();
 
-    if (data.reply) {
-        addMessage(data.reply, "bot");
-    } else {
-        addMessage("Error: " + data.error, "bot");
+        if (data.status === "created") {
+            reg_status.innerText = "✅ Account created";
+        } else {
+            reg_status.innerText = "⚠️ Username already exists";
+        }
+
+    } catch (err) {
+        reg_status.innerText = "❌ Server error";
     }
 }
 
+/* -------- LOGIN -------- */
+async function login() {
+    log_status.innerText = "Logging in...";
+
+    try {
+        const res = await fetch(BASE_URL + "/login", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                username: log_user.value.trim(),
+                password: log_pass.value.trim()
+            })
+        });
+
+        const data = await res.json();
+
+        if (data.status === "success") {
+            currentUser = log_user.value;
+
+            // save session
+            localStorage.setItem("user", currentUser);
+
+            document.getElementById("auth").classList.add("hidden");
+            document.getElementById("chatUI").classList.remove("hidden");
+
+            log_status.innerText = "";
+        } else {
+            log_status.innerText = "❌ Invalid login";
+        }
+
+    } catch (err) {
+        log_status.innerText = "❌ Server error";
+    }
+}
+
+/* -------- SEND MESSAGE -------- */
+async function send() {
+    let text = msg.value.trim();
+    if (!text) return;
+
+    addMessage(text, "user");
+    msg.value = "";
+
+    addMessage("Typing...", "bot-temp");
+
+    try {
+        const res = await fetch(BASE_URL + "/chat", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                message: text,
+                username: currentUser
+            })
+        });
+
+        const data = await res.json();
+
+        removeTempMessage();
+
+        if (data.reply) {
+            addMessage(data.reply, "bot");
+        } else {
+            addMessage("⚠️ No response from server", "bot");
+        }
+
+    } catch (err) {
+        removeTempMessage();
+        addMessage("❌ Network error", "bot");
+    }
+}
+
+/* -------- CHAT UI -------- */
 function addMessage(text, type) {
-    const chat = document.getElementById("chat");
     const div = document.createElement("div");
-    div.className = "message " + type;
+    div.className = "message " + (type === "user" ? "user" : "bot");
+
+    if (type === "bot-temp") {
+        div.id = "temp";
+        div.className = "message bot";
+    }
+
     div.innerText = text;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 }
+
+function removeTempMessage() {
+    const temp = document.getElementById("temp");
+    if (temp) temp.remove();
+}
+
+/* -------- AUTO LOGIN -------- */
+window.onload = () => {
+    const savedUser = localStorage.getItem("user");
+
+    if (savedUser) {
+        currentUser = savedUser;
+        document.getElementById("auth").classList.add("hidden");
+        document.getElementById("chatUI").classList.remove("hidden");
+    }
+};
 </script>
 
 </body>
