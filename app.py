@@ -6,6 +6,7 @@ import hashlib
 import logging
 from datetime import datetime
 from openai import OpenAI
+import os
 
 # ================================
 # LOGGING
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder="static")
 
 # ================================
-# CORS
+# CORS — Allow your GitHub Pages origin + localhost for dev
 # ================================
 CORS(app, origins=[
     "https://sulimansughier.github.io",
@@ -48,11 +49,11 @@ SYSTEM_PROMPT = """
 You are a medical tutor teaching preeclampsia.
 
 Always answer in this format:
-1. Definition
-2. Causes
-3. Symptoms
-4. Diagnosis
-5. Management
+Definition
+Causes
+Symptoms
+Diagnosis
+Management
 
 End with one short question.
 Keep it simple.
@@ -65,6 +66,7 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def ensure_file_exists(filepath: str) -> None:
+    # ✅ FIX: guard against empty dirname (file is in current dir)
     dir_name = os.path.dirname(filepath)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -80,7 +82,7 @@ def user_exists(username: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                if row and len(row) >= 4 and row[1].strip() == username:
+                if row and len(row) >= 2 and row[0].strip() == username:
                     return True
     except Exception as e:
         logger.error("user_exists ERROR: %s", e)
@@ -90,11 +92,8 @@ def add_user(username: str, password: str) -> None:
     ensure_file_exists(USERS_FILE)
     try:
         with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
-            timestamp = datetime.now().isoformat()
-            hashed = hash_password(password)
-
-            # timestamp, username, plain_password, hashed_password
-            csv.writer(f).writerow([timestamp, username, password, hashed])
+            timestamp = datetime.now().isoformat()  # Get the current timestamp
+            csv.writer(f).writerow([timestamp, username, hash_password(password)])  # Include timestamp
     except Exception as e:
         logger.error("add_user ERROR: %s", e)
         raise
@@ -105,12 +104,8 @@ def check_user(username: str, password: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                if row and len(row) >= 4:
-                    saved_username = row[1].strip()
-                    saved_hashed = row[3]
-
-                    if saved_username == username and saved_hashed == hashed:
-                        return True
+                if row and len(row) >= 2 and row[0].strip() == username and row[1] == hashed:
+                    return True
     except Exception as e:
         logger.error("check_user ERROR: %s", e)
     return False
@@ -166,17 +161,6 @@ def login():
 
         if check_user(username, password):
             logger.info("User logged in: %s", username)
-
-            # Save login activity
-            ensure_file_exists(DATA_FILE)
-            with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow([
-                    datetime.now().isoformat(),
-                    username,
-                    password,
-                    "LOGIN"
-                ])
-
             return jsonify({"status": "success"}), 200
 
         return jsonify({"error": "Invalid credentials"}), 401
@@ -199,11 +183,12 @@ def chat():
         if not student_input:
             return jsonify({"error": "Empty message"}), 400
 
+        # ✅ FIX: Use correct OpenAI API method
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": student_input}
+                {"role": "user",   "content": student_input}
             ]
         )
 
@@ -211,12 +196,7 @@ def chat():
 
         ensure_file_exists(DATA_FILE)
         with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([
-                datetime.now().isoformat(),
-                username,
-                student_input,
-                reply
-            ])
+            csv.writer(f).writerow([datetime.now(), username, student_input, reply])
 
         return jsonify({"reply": reply}), 200
 
@@ -228,5 +208,7 @@ def chat():
 # RUN
 # ================================
 if __name__ == "__main__":
+
+
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
