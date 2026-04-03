@@ -92,8 +92,7 @@ def add_user(username: str, password: str) -> None:
     ensure_file_exists(USERS_FILE)
     try:
         with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
-            timestamp = datetime.now().isoformat()  # Get the current timestamp
-            csv.writer(f).writerow([timestamp, username, hash_password(password)])  # Include timestamp
+            csv.writer(f).writerow([username, hash_password(password)])
     except Exception as e:
         logger.error("add_user ERROR: %s", e)
         raise
