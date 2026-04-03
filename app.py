@@ -6,6 +6,7 @@ import hashlib
 import logging
 from datetime import datetime
 from openai import OpenAI
+import os
 
 # ================================
 # LOGGING
@@ -206,4 +207,7 @@ def chat():
 # RUN
 # ================================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
