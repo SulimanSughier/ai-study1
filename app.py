@@ -6,7 +6,6 @@ import hashlib
 import logging
 from datetime import datetime
 from openai import OpenAI
-import os
 
 # ================================
 # LOGGING
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder="static")
 
 # ================================
-# CORS — Allow your GitHub Pages origin + localhost for dev
+# CORS
 # ================================
 CORS(app, origins=[
     "https://sulimansughier.github.io",
@@ -38,9 +37,10 @@ client = OpenAI(api_key=API_KEY)
 # ================================
 # FILE PATHS
 # ================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-USERS_FILE = os.path.join(BASE_DIR, "users.csv")
-DATA_FILE  = os.path.join(BASE_DIR, "data.csv")
+BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE     = os.path.join(BASE_DIR, "users.csv")
+DATA_FILE      = os.path.join(BASE_DIR, "data.csv")
+LOGIN_LOG_FILE = os.path.join(BASE_DIR, "login_log.csv")  # ✅ New
 
 # ================================
 # SYSTEM PROMPT
@@ -66,7 +66,6 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def ensure_file_exists(filepath: str) -> None:
-    # ✅ FIX: guard against empty dirname (file is in current dir)
     dir_name = os.path.dirname(filepath)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -82,7 +81,8 @@ def user_exists(username: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                if row and len(row) >= 2 and row[0].strip() == username:
+                # Row format: [timestamp, username, hashed_password]
+                if row and len(row) >= 3 and row[1].strip() == username:
                     return True
     except Exception as e:
         logger.error("user_exists ERROR: %s", e)
@@ -92,8 +92,8 @@ def add_user(username: str, password: str) -> None:
     ensure_file_exists(USERS_FILE)
     try:
         with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
-            timestamp = datetime.now().isoformat()  # Get the current timestamp
-            csv.writer(f).writerow([timestamp, username, hash_password(password)])  # Include timestamp
+            timestamp = datetime.now().isoformat()
+            csv.writer(f).writerow([timestamp, username, hash_password(password)])
     except Exception as e:
         logger.error("add_user ERROR: %s", e)
         raise
@@ -104,11 +104,23 @@ def check_user(username: str, password: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                if row and len(row) >= 2 and row[0].strip() == username and row[1] == hashed:
+                # Row format: [timestamp, username, hashed_password]
+                if row and len(row) >= 3 and row[1].strip() == username and row[2] == hashed:
                     return True
     except Exception as e:
         logger.error("check_user ERROR: %s", e)
     return False
+
+def log_login(username: str, password: str) -> None:
+    """✅ Logs every successful login with timestamp, username, and plain-text password."""
+    ensure_file_exists(LOGIN_LOG_FILE)
+    try:
+        with open(LOGIN_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+            timestamp = datetime.now().isoformat()
+            csv.writer(f).writerow([timestamp, username, password])
+            logger.info("Login logged for: %s", username)
+    except Exception as e:
+        logger.error("log_login ERROR: %s", e)
 
 # ================================
 # ROUTES
@@ -160,6 +172,7 @@ def login():
             return jsonify({"error": "Missing username or password"}), 400
 
         if check_user(username, password):
+            log_login(username, password)  # ✅ Save login to login_log.csv
             logger.info("User logged in: %s", username)
             return jsonify({"status": "success"}), 200
 
@@ -183,7 +196,6 @@ def chat():
         if not student_input:
             return jsonify({"error": "Empty message"}), 400
 
-        # ✅ FIX: Use correct OpenAI API method
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -208,7 +220,5 @@ def chat():
 # RUN
 # ================================
 if __name__ == "__main__":
-
-
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
