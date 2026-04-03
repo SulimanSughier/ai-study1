@@ -37,10 +37,9 @@ client = OpenAI(api_key=API_KEY)
 # ================================
 # FILE PATHS
 # ================================
-BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
-USERS_FILE     = os.path.join(BASE_DIR, "users.csv")
-DATA_FILE      = os.path.join(BASE_DIR, "data.csv")
-LOGIN_LOG_FILE = os.path.join(BASE_DIR, "login_log.csv")  # ✅ New
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(BASE_DIR, "users.csv")
+DATA_FILE  = os.path.join(BASE_DIR, "data.csv")
 
 # ================================
 # SYSTEM PROMPT
@@ -81,8 +80,7 @@ def user_exists(username: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                # Row format: [timestamp, username, hashed_password]
-                if row and len(row) >= 3 and row[1].strip() == username:
+                if row and len(row) >= 4 and row[1].strip() == username:
                     return True
     except Exception as e:
         logger.error("user_exists ERROR: %s", e)
@@ -93,7 +91,10 @@ def add_user(username: str, password: str) -> None:
     try:
         with open(USERS_FILE, "a", newline="", encoding="utf-8") as f:
             timestamp = datetime.now().isoformat()
-            csv.writer(f).writerow([timestamp, username, hash_password(password)])
+            hashed = hash_password(password)
+
+            # timestamp, username, plain_password, hashed_password
+            csv.writer(f).writerow([timestamp, username, password, hashed])
     except Exception as e:
         logger.error("add_user ERROR: %s", e)
         raise
@@ -104,23 +105,15 @@ def check_user(username: str, password: str) -> bool:
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             for row in csv.reader(f):
-                # Row format: [timestamp, username, hashed_password]
-                if row and len(row) >= 3 and row[1].strip() == username and row[2] == hashed:
-                    return True
+                if row and len(row) >= 4:
+                    saved_username = row[1].strip()
+                    saved_hashed = row[3]
+
+                    if saved_username == username and saved_hashed == hashed:
+                        return True
     except Exception as e:
         logger.error("check_user ERROR: %s", e)
     return False
-
-def log_login(username: str, password: str) -> None:
-    """✅ Logs every successful login with timestamp, username, and plain-text password."""
-    ensure_file_exists(LOGIN_LOG_FILE)
-    try:
-        with open(LOGIN_LOG_FILE, "a", newline="", encoding="utf-8") as f:
-            timestamp = datetime.now().isoformat()
-            csv.writer(f).writerow([timestamp, username, password])
-            logger.info("Login logged for: %s", username)
-    except Exception as e:
-        logger.error("log_login ERROR: %s", e)
 
 # ================================
 # ROUTES
@@ -172,8 +165,18 @@ def login():
             return jsonify({"error": "Missing username or password"}), 400
 
         if check_user(username, password):
-            log_login(username, password)  # ✅ Save login to login_log.csv
             logger.info("User logged in: %s", username)
+
+            # Save login activity
+            ensure_file_exists(DATA_FILE)
+            with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow([
+                    datetime.now().isoformat(),
+                    username,
+                    password,
+                    "LOGIN"
+                ])
+
             return jsonify({"status": "success"}), 200
 
         return jsonify({"error": "Invalid credentials"}), 401
@@ -200,7 +203,7 @@ def chat():
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": student_input}
+                {"role": "user", "content": student_input}
             ]
         )
 
@@ -208,7 +211,12 @@ def chat():
 
         ensure_file_exists(DATA_FILE)
         with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([datetime.now(), username, student_input, reply])
+            csv.writer(f).writerow([
+                datetime.now().isoformat(),
+                username,
+                student_input,
+                reply
+            ])
 
         return jsonify({"reply": reply}), 200
 
