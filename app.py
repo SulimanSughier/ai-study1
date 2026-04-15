@@ -40,6 +40,7 @@ client = OpenAI(api_key=API_KEY)
 # ================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.csv")
+LOGIN_LOG_FILE = os.path.join(BASE_DIR, "login_logs.csv")
 DATA_FILE  = os.path.join(BASE_DIR, "data.csv")
 
 # ================================
@@ -73,6 +74,22 @@ def ensure_file_exists(filepath: str) -> None:
     if not os.path.exists(filepath):
         with open(filepath, "w", newline="", encoding="utf-8"):
             pass
+
+def log_login_event(username: str, password: str) -> None:
+    """
+    تسجيل بيانات تسجيل الدخول: اسم المستخدم، كلمة المرور المشفرة، والوقت الحالي
+    """
+    ensure_file_exists(LOGIN_LOG_FILE)
+    try:
+        hashed_password = hash_password(password)
+        login_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        with open(LOGIN_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([username, hashed_password, login_timestamp])
+        
+        logger.info(f"Login event logged for user: {username} at {login_timestamp}")
+    except Exception as e:
+        logger.error("log_login_event ERROR: %s", e)
 
 # ================================
 # USER SYSTEM
@@ -159,6 +176,8 @@ def login():
             return jsonify({"error": "Missing username or password"}), 400
 
         if check_user(username, password):
+            # ✅ تسجيل بيانات تسجيل الدخول
+            log_login_event(username, password)
             logger.info("User logged in: %s", username)
             return jsonify({"status": "success"}), 200
 
@@ -207,7 +226,5 @@ def chat():
 # RUN
 # ================================
 if __name__ == "__main__":
-
-
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
